@@ -1,0 +1,61 @@
+name: Debug OIDC Token
+on: [push]
+
+jobs:
+  debug:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Get OIDC Token
+        id: oidc
+        run: |
+          echo "🔍 Getting OIDC Token..."
+          
+          # Get the OIDC token
+          TOKEN=$(curl -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+                      "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=sts.amazonaws.com" \
+                      | jq -r '.value')
+          
+          echo "Token length: ${#TOKEN}"
+          echo "Token preview: ${TOKEN:0:50}..."
+          
+          # Decode the JWT token to see its claims
+          echo "📋 Decoding JWT token claims..."
+          echo $TOKEN | cut -d. -f2 | base64 -d | jq . || echo "Failed to decode token"
+          
+          # Save token for later use
+          echo "token=$TOKEN" >> $GITHUB_OUTPUT
+      
+      - name: Manual AWS Assume Role
+        run: |
+          echo "🔧 Trying manual AWS assume role..."
+          
+          # Set AWS credentials manually
+          export AWS_REGION=ap-east-1
+          
+          # Try to assume the role manually
+          aws sts assume-role-with-web-identity \
+            --role-arn arn:aws:iam::396961015104:role/imaginary-challenge \
+            --role-session-name github-debug-session \
+            --web-identity-token ${{ steps.oidc.outputs.token }} \
+            --duration-seconds 3600 || echo "❌ Manual assume role failed"
+      
+      - name: Check Repository Pattern Match
+        run: |
+          echo "🔍 Checking if repository matches IAM role pattern..."
+          REPO="${{ github.repository }}"
+          echo "Repository: $REPO"
+          
+          # Check if it matches the pattern: repo:*-empasoft-ctf/2025-*
+          if [[ $REPO =~ .*-empasoft-ctf/2025-.* ]]; then
+            echo "✅ Repository matches pattern: repo:*-empasoft-ctf/2025-*"
+          else
+            echo "❌ Repository does NOT match pattern: repo:*-empasoft-ctf/2025-*"
+            echo "Expected pattern: *-empasoft-ctf/2025-*"
+            echo "Your repository: $REPO"
+          fi
